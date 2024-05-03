@@ -6,12 +6,40 @@ import seaborn as sns
 import pandas as pd
 from scipy.spatial.distance import jaccard, pdist, cdist
 
+
+def compute_std_likes(model):
+    return np.std(model.likes_tracker.sum(axis=1))
+
+def compute_mean_likes(model):
+    return np.mean(model.likes_tracker.sum(axis=1))
+
+def compute_mean_tweets_per_user(model):
+    #compute the mean number of tweets per user in the content_pool
+    #return np.mean(model.tweets_tracker.sum(axis=0))
+    return np.mean(model.likes_tracker.sum(axis=0))
+
+def compute_std_tweets_per_user(model):
+    return np.std(model.likes_tracker.sum(axis=0))
+
+def compute_precision_at_k(model,k):
+    if k == 10:
+        return np.mean(model.precision_tracker[:,0])
+    elif k == 20:
+        return np.mean(model.precision_tracker[:,1])
+    elif k == 30:
+        return np.mean(model.precision_tracker[:,2])
+    else:
+        return -1
+        #return np.mean(model.precision_tracker[:,2])
+
 def local_bias(model, attn_func = None):
     edges = np.array(list(model.edges_seen))#np.array([[int(x) for x in edge.split('_')] for i, edge in enumerate(model.edges_seen)])
     #np.array([(friend, user) for friend in model.edges_seen for user in model.edges_seen[friend]])
 
+    #  each edge is (friend, cur_user, (tweet[0], self.id, float(in_deg(agent)), float(model.user_map[agent.id]), float(out_deg(agent)), float(model.map_deg_friends[agent])))
+
     user_map = model.user_map
-    G_in = model.net.graph.in_degree
+    G_in = model.in_degree#model.net.graph.in_degree # fix the in degree
     mean_in_deg = model.mean_in_deg
     true_prev = model.true_prev
     in_deg = G_in
@@ -26,7 +54,9 @@ def local_bias(model, attn_func = None):
     #vectorize
     try:
         print("num_edges before: ", num_edges)
-        vals[:,2] = 1.0/(vals[:,2] + 1.0)
+        vals[:,2] = 1.0/(vals[:,2])
+        vals[vals[:,2] == 1.0,2] = np.nan
+        vals[vals[:,3] == -1, 3] = np.nan
         vals[:,3] = (vals[:,3]*vals[:,2]) / num_edges
         print("after ", num_edges)
     except IndexError as e:
@@ -48,7 +78,9 @@ def local_bias(model, attn_func = None):
     vals = [user_map[edge[1]]*attn_func(edge) / num_edges for edge in edges]
     exp_val = np.nansum(list(vals))
     '''
-    #print(mean_in_deg, np.nansum(vals[:,3]), vals[:,2])
+    
+    print("mean {}\t sum{}\td {}".format(mean_in_deg, np.nansum(vals[:,3]), vals[:,2]))
+    
     return mean_in_deg * np.nansum(vals[:,3]) - true_prev
 
     return np.mean(list(dict(in_deg).values())) * exp_val - true_prev
@@ -179,137 +211,7 @@ def adjust_assort(G, goal_assort):
     return G
 
 
-class OSNAgent(mesa.Agent):
-    """An agent with fixed initial wealth."""
 
-    def __init__(self, unique_id, model, lam=3, ranking=None, activity="Constant"):
-        # Pass the parameters to the parent class.
-        super().__init__(unique_id, model)
-
-        # Create the agent's attribute and set the initial values.
-        self.wealth = 1
-        self.lam = lam
-        self.ranking = ranking
-        self.friends = self.model.grid.get_neighbors(self.unique_id)
-        self.activity = activity
-        self.len_feed = model.len_feed
-        self.last_nodes_seen = []
-        if activity != "Constant":
-            self.poisson = self.random.poisson
-   
-    def step(self):
-        # pick a number of tweets that the user consumes from their timeline
-        num_tweets_consumed = self.len_feed
-        if self.activity == "Constant":
-            num_tweets_produced = 10
-        else:
-            num_tweets_produced = self.poisson(self.lam, size=1)[0]
-        cur_time = self.model.schedule.time
-        uid = self.unique_id
-        self.model.content_pool.extend([(uid, cur_time) for x in range(num_tweets_produced)])
-        #for x in range(num_tweets_produced):
-        #    self.model.content_pool.append((self.unique_id, self.model.schedule.time))
-
-        tweets_seen = self.model.serve_tweets(num_tweets_consumed, self.unique_id, ranking=self.ranking) 
-        num_friends = len(self.friends)
-        # update the user's model of the network
-        #self.model.update_network(self.unique_id, tweets_seen)
-
-        
-        for tweet in tweets_seen:
-            if self.wealth > 0:
-                other_agent = [agent for agent in self.model.schedule.agents if agent.unique_id == tweet[0]][0]
-                if other_agent is not None:
-                    other_agent.wealth += self.wealth / num_friends
-                    self.wealth -= self.wealth / num_friends
-        if self.wealth > 0 and self.wealth < 1:
-            self.wealth = 1
-        
-
-        self.last_nodes_seen = [tweet[0] for tweet in tweets_seen]
-
-
-
-
-
-
-class OSNModel(mesa.Model):
-    """A model with some number of agents."""
-
-    def __init__(self, N, graph, assort, kx_corr=0.0, len_feed=30, lam=None, ranking=None, activity="Constant"):
-        self.num_agents = N
-        graph = adjust_assort(graph, assort)
-        self.graph = graph
-        self.follower_dist = graph.out_degree
-        self.friend_dist = [graph.in_degree[x] for x in graph.nodes]
-        self.in_degree = self.graph.in_degree
-        self.grid = mesa.space.NetworkGrid(graph)
-        self.schedule = mesa.time.RandomActivation(self)
-        self.running = True
-        self.random = np.random.default_rng()
-        self.content_pool = []
-        self.edges_seen = set()
-        self.true_prev = 0.05
-        self.vals = self.random.binomial(n=1, p=self.true_prev, size=self.num_agents)
-        self.user_map = {user:val for user, val in zip(list(range(self.num_agents)), self.vals)}
-        self.rewire_synth(kx_corr)
-        self.kx_corr = kx_corr
-        
-        self.ctr = 0
-        self.len_feed=len_feed
-        self.mean_in_deg = np.mean(list(dict(self.graph.in_degree).values()))
-        
-
-        # Create agents
-        for i in range(self.num_agents):
-            a = OSNAgent(i, self, lam, ranking=ranking, activity="Not")
-            self.schedule.add(a)
-            # Add the agent to a random grid cell
-            try:
-                self.grid.place_agent(a, i)
-            except KeyError as e:
-                self.running = False
-                print(e)
-                return
-        self.datacollector = mesa.DataCollector(
-            model_reporters={"Gini": compute_gini, "B_local": local_bias, "Jaccard": compute_jaccard}, agent_reporters={"Wealth": "wealth"}
-        )
-
-    def serve_tweets(self, num_tweets, user, ranking=None):
-        neighs = self.grid.get_neighbors(user)
-        # TODO: use a higher lookback for content pool
-        tweets_seen = [x for x in self.content_pool[-4*num_tweets:] if x[1] in neighs]
-        if ranking:
-            if ranking == "Popularity":
-                tweets_seen = sorted(tweets_seen, key=lambda x: self.follower_dist[x[0]], reverse=True)
-            elif ranking == "Random":
-                tweets_seen = self.random.choice(tweets_seen, size=min(len(tweets_seen), num_tweets), replace=False)
-            elif ranking == "Wealth":
-                wealths = {agent.unique_id:agent.wealth for agent in self.schedule.agents}
-                tweets_seen = sorted(tweets_seen, key = lambda x: wealths[x[0]], reverse=True)
-
-        tweets_seen = tweets_seen[:num_tweets]
-        in_deg = self.graph.in_degree
-        for tweet in tweets_seen:
-            #self.edges_seen["{}_{}".format(tweet[0], user)] = 0
-            self.edges_seen.add((tweet[0], user, float(in_deg(user)), float(self.user_map[user])))
-        return tweets_seen
-
-    def step(self):
-        try:
-            self.datacollector.collect(self)
-            self.schedule.step()
-            self.ctr += 1
-            #if self.ctr % 100 == 0:
-            #    self.content_pool = self.content_pool[-self.len_feed*self.num_agents:]
-            #    #self.edges_seen = set()
-        except nx.NetworkXError as e:
-            print(e)
-            return
-        except KeyError as e:
-            print(e)
-            return
-        
 
     def corr(self, y, um):
         avg_pos_degree = np.mean([self.graph.in_degree[x] for x in um])
@@ -375,3 +277,71 @@ class OSNModel(mesa.Model):
             if iters % 5000 == 0:
                 print(cur_corr, delta, iters)
         return  cur_user_map   
+    
+
+def train_logit(model):
+    global model_bk
+        
+    model.likes_tracker
+    #I have collated tweet data and the actual retweets the users did 
+    # current_time - original_time, original_user_id, if hashtag, retweet_yn
+    # Sample DataFrame
+    all_user_retweets = activity_df[activity_df['RT'] == 'RT']
+    found_rts_users = rts[rts['re_tweet_id'].isin(all_user_retweets['tweet_id'])][['original_user_id', 'retweet_time', 'original_time', 'original_tweet_id']]
+
+    found_rts_users['friend_deg'] = found_rts_users['original_user_id'].apply(lambda x: degrees_out[x] if x in degrees_out else -1)
+    found_rts_users['friend_bin'] = found_rts_users['original_user_id'].apply(lambda x: 1 if user in map_friends and x in map_friends[user] else 0)
+    #found_rts_users['retweet_time'] = pd.to_datetime(found_rts_users['retweet_time'])
+    #found_rts_users['original_time'] = pd.to_datetime(found_rts_users['original_time'])
+    found_rts_users['RT'] = [1 for x in found_rts_users.index]
+    #found_rts_users['timedelta'] = (found_rts_users['retweet_time'] - found_rts_users['original_time']).dt.total_seconds()
+
+    all_friend_tweets = collated_tweet_df[['user_id', 'date_created', 'tweet_id']]
+    all_friend_tweets['tweet_id'] = all_friend_tweets['tweet_id'].astype(int)
+    #all_friend_tweets['original_time'] = pd.to_datetime(all_friend_tweets['date_created'])
+    
+    frs_with_rts = all_friend_tweets[all_friend_tweets['tweet_id'].isin(found_rts_users['original_tweet_id'])].index
+    all_friend_tweets['friend_deg'] = all_friend_tweets['user_id'].apply(lambda x: degrees_out[x] if x in degrees_out else -1)
+    all_friend_tweets['friend_bin'] = all_friend_tweets['user_id'].apply(lambda x: 1 if x in map_friends[user] else 0)
+
+    all_friend_tweets['RT'] = [0 for x in all_friend_tweets.index]
+    all_friend_tweets.loc[frs_with_rts, 'RT'] = 1
+    #print("frs with rts ", frs_with_rts, " and all frs ", all_friend_tweets['RT'].describe())
+    
+    df = pd.concat([found_rts_users, all_friend_tweets])[['friend_deg', 'friend_bin', 'RT']]
+
+
+    #print("full df rt vc ", df['RT'].value_counts())
+    features = ['friend_deg', 'friend_bin']  # Add other relevant features
+    X = df[features]
+    y = df['RT']
+
+    # Splitting data into training and testing sets
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+        # Training the logistic regression model
+        model = LogisticRegression()
+
+        model.fit(X_train, y_train)
+    except ValueError as e:
+        print("user {} had error {}".format(user, e))
+        model = model_bk
+    
+    if model_bk is None:
+        model_bk = model
+
+
+
+    # Make predictions
+    try:
+        predictions = model.predict_proba(all_friend_tweets[['friend_deg', 'friend_bin']])[:,1]
+    except ValueError as e:
+        predictions = [1.0 for x in collated_tweet_df.index]
+    #print(predictions)
+    # The 'predictions' variable now contains the predicted probabilities of engagement for each tweet
+    # You can add these probabilities to your DataFrame for further analysis or ranking
+    collated_tweet_df['predicted_prob_engagement'] = predictions
+
+    # Now you can rank tweets based on the predicted probabilities
+    collated_tweet_df = collated_tweet_df.iloc[np.argsort(predictions)[::-1]]
