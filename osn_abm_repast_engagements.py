@@ -711,7 +711,7 @@ class Model:
                 self.rec = self.random.uniform(size=(self.likes_tracker.shape[0], self.likes_tracker.shape[1]))
             
 
-        '''
+        
         cur_tick = self.runner.schedule.tick
         if self.ranking == 'WideDeep':
             if cur_tick == 1:
@@ -720,8 +720,8 @@ class Model:
                 print ("BEFORE THE FIRST OF THE THINGS")
                 self.rec = predict_wide_deep(self).predict
                 print ("AFTER THE FIRST")
-        '''
-        if self.ranking == 'NCF' or self.ranking=='WideDeep':
+        
+        if self.ranking == 'NCF':
                 
 
             #data is a pandas dataframe with columns user_id, tweet_id, and like from each agents' liked tweets
