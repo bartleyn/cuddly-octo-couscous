@@ -295,8 +295,6 @@ class ExposureAgent(core.Agent):
         
         cur_time = model.runner.tick()
         model.content_pool.extend([[int(self.id), int(cur_time), "{}_{}_{}".format(self.id, cur_time, x), float(user_map[map_user_id[self.id]]) if map_user_id[self.id] in user_map else -1 ] for x in range(num_tweets_produced)]) #4807204
-        #for x in range(num_tweets_produced):
-        #    self.model.content_pool.append((self.unique_id, self.model.schedule.time))
 
         if self.ranking == None:
             return
@@ -307,8 +305,6 @@ class ExposureAgent(core.Agent):
         # get the tweets that the user sees
         tweets_seen = model.serve_tweets(num_tweets_consumed, self.id, ranking=self.ranking) 
         num_friends = len(self.friends)
-        # update the user's model of the network
-        #self.model.update_network(self.unique_id, tweets_seen)
 
         t1 = time.time()
         if t1 - t0 > 0.9:
@@ -316,8 +312,6 @@ class ExposureAgent(core.Agent):
             print("time to serve tweets ", t1 - t0, " for agent ", self.id)
         
 
-        #model.user_map = {user:val for user, val in zip(list(model.context.agents()), model.vals)}
-        #personal_vals = [model.user_map[x[0]] for x in tweets_seen]
         try:
             map_user_id[self.id]
         except KeyError as e:
@@ -341,17 +335,13 @@ class ExposureAgent(core.Agent):
 
         if cur_val == 1:
             tweet_vals = np.array([float(x[3]) for x in tweets_seen])
-            #print("tweet_vals!!! ", tweet_vals)
-            #print("first two tweets seen: ", tweets_seen[:2])
             inv_tweet_vals = 1.0 - tweet_vals 
 
             likes_20p = tweet_vals * likes_20p
             likes = inv_tweet_vals * likes
         else:
             tweet_vals = np.array([float(x[3]) for x in tweets_seen])
-            #print("tweet_vals!!! ", tweet_vals)
             
-            #print("first two tweets seen: ", tweets_seen[:2])
     
             inv_tweet_vals = 1.0 - tweet_vals
 
@@ -363,24 +353,6 @@ class ExposureAgent(core.Agent):
         
 
         user_likes = list(zip([x for x in tweets_seen], likes))
-
-        '''
-        def attention_decay_function(position, decay_rate):
-            """ Calculate the probability of liking a tweet based on its position in the feed. """
-            return np.exp(-decay_rate * position)
-
-        def decide_to_like_tweet(position, decay_rate):
-            """ Decide whether to like a tweet based on the decay function. """
-            probability_of_liking = attention_decay_function(position, decay_rate)
-            return 1 if np.random.rand() < probability_of_liking else 0
-
-        # Parameters
-        decay_rate = 0.1  # Adjust this to change how quickly attention decays
-        number_of_tweets = len(tweets_seen)  # Total number of tweets in the feed
-
-        # Simulation
-        user_likes = [(x[0], decide_to_like_tweet(position, decay_rate)) for position, x in enumerate(tweets_seen)]
-        '''
 
 
         if self.real_userid is None:
@@ -396,42 +368,8 @@ class ExposureAgent(core.Agent):
                 self.liked_tweets[int(t[0])].append(int(t[1]))
             except KeyError as e:
                 self.liked_tweets[int(t[0])] = [int(t[1])]
-        #for tweet in tweets_seen:
-        #    #if self.wealth > 0:
-        #    #    other_agent = [agent for agent in model.context.agents() if agent.id == tweet[0]][0]
-        #    #    if other_agent is not None:
-        #    #        other_agent.wealth += self.wealth / num_friends
-        #    #        self.wealth -= self.wealth / num_friends
-        #if self.wealth > 0 and self.wealth < 1:
-        #    self.wealth = 1
         
 
-        #in_deg = full_graph.in_degree
-        #out_deg = full_graph.out_degree
-        '''
-        cur_agent = [agent for agent in model.context.agents() if agent.id == self.id][0]
-        #t0 = time.time()
-        for tweet in tweets_seen:
-            agent = [agent for agent in model.context.agents() if agent.id == int(tweet[0])][0]
-            try:
-                float(user_map[model.map_user_id[agent.id]])
-            except KeyError as e:
-                print("agent {} is not in usermap".format(agent.id))
-                user_map[model.map_user_id[agent.id]] = self.random.binomial(n=1, p=model.true_prev, size=1)[0]
-            finally:
-                if  agent in model.map_friends[cur_agent]:
-                    try:
-                        model.net.graph[agent][cur_agent]['seen'] = 1.0 #full_graph[agent.id][cur_agent.id]['seen'] = 1.0   # try a key error and see if agent is neighs
-                    except KeyError as e:
-                        print("full_graph hi hi ", model.nodes[0])
-                        print("full_graph e e ", list(full_graph.edges)[0])
-                        pass
-                    #full_graph[cur_agent.id][agent.id]['seen'] = 1.0
-                self.last_nodes_seen.add((int(tweet[0]), self.id, float(model.out_degree[cur_agent.id]) + 1, float(tweet[3])  , float(model.out_degree[agent.id]), float(model.map_deg_friends[agent])))
-        #t1 = time.time()
-        #print("time to update last nodes seen ", t1 - t0, " for agent ", cur_agent)
-        #self.last_nodes_seen = [tweet[0] for tweet in tweets_seen]
-        '''
         agent_dict = {agent.id: agent for agent in model.context.agents()}
 
         # Lookup current agent once, outside the loop
@@ -501,8 +439,6 @@ class ExposureMeasures:
 
 class Model:    
 
-
-
     def __init__(self, comm, params):
         print("Initializing model")
         self.runner = schedule.init_schedule_runner(comm)
@@ -547,9 +483,6 @@ class Model:
 
         print("Num nodes: ", len(self.net.graph.nodes))
         print("Num seedusers ", len(self.seed_users))
-        #for x in self.seed_users:
-        #    if len(x) < 3:
-        #        print(x)
         for prj in self.context.projections.values():
             print("Projection name: ", prj.name)
         
@@ -608,13 +541,6 @@ class Model:
         self.precision_tracker = lil_matrix((5599, 3))
 
 
-        #self.likes_tracker = lil_matrix((5599, len(self.net.graph.nodes) ), dtype=np.int8)#len(full_graph.nodes)), dtype=np.int8)
-        #if params['network'] == 'Empirical':
-        #    self.vals = self.random.binomial(n=1, p=self.true_prev, size=len(self.net.graph.nodes))
-        #    self.user_map = {user:val for user, val in zip(list(self.net.graph.nodes), self.vals)}
-        #else:
-        #    self.vals = self.random.binomial(n=1, p=self.true_prev, size=params['num_agents'])
-        #    self.user_map = {user:val for user, val in zip(list(range(params['num_agents'])), self.vals)}
         if params['network'] != 'Empirical':
             self.rewire_synth(params['kx_corr'])
         self.kx_corr = params['kx_corr']
@@ -648,24 +574,6 @@ class Model:
         self.curr_corr = 0.0
    
 
-    '''
-    def _seed_rumor(self, init_rumor_count: int, comm):
-        world_size = comm.Get_size()
-        # np array of world size, the value of i'th element of the array
-        # is the number of rumors to seed on rank i.
-        rumor_counts = np.zeros(world_size, np.int32)
-        if (self.rank == 0):
-            for _ in range(init_rumor_count):
-                idx = random.default_rng.integers(0, high=world_size)
-                rumor_counts[idx] += 1
-
-        rumor_count = np.empty(1, dtype=np.int32)
-        comm.Scatter(rumor_counts, rumor_count, root=0)
-
-        for agent in self.context.agents(count=rumor_count[0], shuffle=True):
-            agent.received_rumor = True
-            self.rumor_spreaders.append(agent)
-    '''
 
     def update_likes(self, real_userid, likes):
         for like in likes:
@@ -805,28 +713,13 @@ class Model:
         t1 = time.time()
         print("Rank: ", self.rank, "Tick: ", self.runner.schedule.tick, "done with step and sync stuff in ", t1 - t0)
         if self.ranking == 'MinimizeRho' and self.rank != 0:
-            '''
-            for agent in self.context.agents():
-                #self.net.graph[agent.id][agent.id]['seen'] = 1.0
-                #can i replace edges seen across the board with this kind of approach?
-                #self.sum_out_degree_obs += np.sum([x[2] for x in agent.last_nodes_seen])
-                #self.num_edges_seen += len(agent.last_nodes_seen)
-                self.edges_seen = self.edges_seen.union(agent.last_nodes_seen)
-            '''
 
             t0 = time.time()
             obs_edges = [uid for uid, attrs in self.edge_cache.items() if attrs['seen'] == 1.0]
             self.sum_out_degree_obs = sum(attrs['out_degree'] for uid, attrs in self.edge_cache.items() if uid in obs_edges)
             self.num_edges_seen = len(obs_edges)
-            #print([x for x in self.net.graph.edges(data=True)][:5])
-            #obs_edges = [x for x in self.net.graph.edges(data=True) if x[2] == 1.0]
-            #self.sum_out_degree_obs = np.sum([self.out_degree[x[0]] for x in obs_edges])
-            #self.num_edges_seen = len([x for x in self.net.graph.edges(data=True) if x[2] == 1.0])
             t1 = time.time()
             print("time to update all variables ", t1 - t0, " for model rank " , self.rank)
-            #self.sum_out_degree_obs = np.sum([x[2] for x in self.edges_seen])
-            #self.num_edges_seen = len(self.edges_seen)
-            #self.edges_seen = set()
         agents = list(self.context.agents())
         if self.rank == 0:
             to_be_added = set()
@@ -969,101 +862,6 @@ class Model:
             elif ranking == 'Chronological':
                 tweets_seen = sorted(tweets_seen, key=lambda x: x[1], reverse=True)
             elif ranking == 'MinimizeRho':
-                '''
-                active_possible_edges = [tuple(x) for x in tweets_seen if x[3] == 1.0]
-                inactive_possible_edges = [tuple(x) for x in tweets_seen if x[3] == 0.0]
-                active_edges = self.edges_seen
-                average_active_in_degree = np.mean([self.out_degree[int(x[0])] for x in active_possible_edges])
-                average_in_degree = np.mean([x[2] for x in self.edges_seen] + [self.out_degree[x[0]] for x in inactive_possible_edges] + [self.out_degree[x[0]] for x in active_possible_edges])
-                min_iters = 0
-                active_possible_edges_sub = active_possible_edges
-                inactive_possible_edges_sub = inactive_possible_edges
-                while abs(average_active_in_degree - average_in_degree) > 1e-5 and min_iters < 1000:
-                    active_possible_edges_sub = self.random.choice(active_possible_edges, size=min(int(len(active_possible_edges)/2), 5000), replace=False)
-                    
-                    inactive_possible_edges_sub = self.random.choice(inactive_possible_edges, size=min(int(len(inactive_possible_edges)/2), 5000), replace=False)
-                    average_active_in_degree = np.mean([self.out_degree[int(x[0])] for x in active_possible_edges_sub])
-                    average_in_degree = np.mean([x[2] for x in active_edges] + \
-                                                [self.out_degree[int(x[0])] for x in inactive_possible_edges_sub] \
-                                                    + [self.out_degree[int(x[0])] for x in active_possible_edges_sub])
-                    min_iters += 1
-                    #if min_iters % 500 == 0:
-                    #    print("MinimizeRho: ", min_iters, " with ", len(active_possible_edges_sub), " active edges and ", len(inactive_possible_edges_sub), " inactive edges")
-                '''
-                '''
-                # Pre-compute and cache the out_degrees and organize edges by status in one pass
-                active_possible_edges = []
-                inactive_possible_edges = []
-
-                # Cache the out_degree calculations for later use
-                #out_degree_cache = {int(x[0]): self.out_degree[int(x[0])] for x in tweets_seen}
-
-
-                out_degree_cache_ix = {int(x[0]):ix for ix,x in enumerate(tweets_seen)}
-                out_degree_cache = np.array([self.out_degree[int(x[0])] for x in tweets_seen])
-                
-                t0 = time.time()
-
-                for x in tweets_seen:
-                    if x[3] == 1.0:
-                        active_possible_edges.append(x)
-                    elif x[3] == 0.0:
-                        inactive_possible_edges.append(x)
-
-                t1 = time.time()
-                print("Time to organize edges by status: ", t1 - t0)
-                t0 = t1
-
-                # Calculate averages outside the loop using the cached out_degree values
-                #average_active_in_degree = np.mean([out_degree_cache[int(x[0])] for x in active_possible_edges])
-                average_active_in_degree = np.mean(out_degree_cache[[out_degree_cache_ix[int(x[0])] for x in active_possible_edges]])
-
-                #average_in_degree = (self.sum_out_degree_obs + 
-                #                            np.sum([out_degree_cache[int(x[0])] for x in inactive_possible_edges] + 
-                #                            [out_degree_cache[int(x[0])] for x in active_possible_edges])) / (self.num_edges_seen + len(inactive_possible_edges) + len(active_possible_edges))
-
-                try:
-                    average_in_degree = (self.sum_out_degree_obs +
-                                        np.sum([out_degree_cache[[out_degree_cache_ix[int(x[0])] for x in active_possible_edges]]]) +
-                                        np.sum([out_degree_cache[[out_degree_cache_ix[int(x[0])] for x in inactive_possible_edges]]])) / (self.num_edges_seen + len(inactive_possible_edges) + len(active_possible_edges))
-                except IndexError as e:
-
-                    print("Size of out_degree_cache:", len(out_degree_cache))
-                    print("Indices for active_possible_edges:", [out_degree_cache_ix[int(x[0])] for x in active_possible_edges])
-                    print("Indices for inactive_possible_edges:", [out_degree_cache_ix[int(x[0])] for x in inactive_possible_edges])
-                    raise Exception
-                # Initialize iteration and subset lists
-                min_iters = 0
-                active_possible_edges_sub = active_possible_edges
-                inactive_possible_edges_sub = inactive_possible_edges
-                choice = self.random.choice
-                ln_active = len(active_possible_edges) // 2
-                ln_inactive = len(inactive_possible_edges) // 2
-
-                t1 = time.time()
-                print("Time to compute averages: ", t1 - t0)
-                t0 = t1
-                # Continue the iterative process
-                while abs(average_active_in_degree - average_in_degree) > 5 and min_iters < 1000:
-                    # Sampling should be done without replacement to avoid duplicates
-                    active_possible_edges_sub = choice(active_possible_edges, size=min(ln_active, 50), replace=False)
-                    inactive_possible_edges_sub = choice(inactive_possible_edges, size=min(ln_inactive, 50), replace=False)
-
-                    # Recompute averages based on the sampled subsets using cached values
-                    #average_active_in_degree = np.mean([out_degree_cache[int(x[0])] for x in active_possible_edges_sub])
-                    average_active_in_degree = np.mean(out_degree_cache[[out_degree_cache_ix[int(x[0])] for x in active_possible_edges_sub]])
-                    #average_in_degree = (self.sum_out_degree_obs + 
-                    #                        np.sum([out_degree_cache[int(x[0])] for x in inactive_possible_edges_sub] + 
-                    #                        [out_degree_cache[int(x[0])] for x in active_possible_edges_sub])) / (self.num_edges_seen + len(inactive_possible_edges_sub) + len(active_possible_edges_sub))
-                    average_in_degree = (self.sum_out_degree_obs +
-                                        np.sum([out_degree_cache[[out_degree_cache_ix[int(x[0])] for x in active_possible_edges_sub]]]) +
-                                        np.sum([out_degree_cache[[out_degree_cache_ix[int(x[0])] for x in inactive_possible_edges_sub]]])) / (self.num_edges_seen + len(inactive_possible_edges_sub) + len(active_possible_edges_sub))
-
-                    t1 = time.time()
-                    print("Time to compute averages for iter {}: {}".format(min_iters, t1 - t0))
-                    t0 = t1
-                    min_iters += 1
-                '''
                 out_degree_cache_ix = {int(x[0]): ix for ix, x in enumerate(tweets_seen)}
                 out_degree_cache = np.array([self.out_degree[int(x[0])] for x in tweets_seen])
 
@@ -1096,68 +894,6 @@ class Model:
                 #sum_sampled_active = np.sum(out_degree_cache[sampled_active_indices])
 
 
-                '''
-                # Continue the iterative process
-                min_iters = 0
-
-                sampled_inactive_indices = inactive_indices
-                while abs(average_active_in_degree - average_in_degree) > 5 and min_iters < 1000:
-                    # Sampling should be done without replacement to avoid duplicates
-                    sampled_inactive_indices = self.random.choice(inactive_indices, size=min(len_inactive // 2, 50), replace=False)
-
-                    # Compute averages using the sampled indices
-                    sum_sampled_inactive = np.sum(out_degree_cache[sampled_inactive_indices])
-                    
-                    average_in_degree = (self.sum_out_degree_obs + sum_active + sum_sampled_inactive) / \
-                                        (self.num_edges_seen + len(active_indices) + len(sampled_inactive_indices))
-
-                    
-                    if min_iters % 500 == 0:
-                        t0 = time.time()
-                        print("Time to compute averages for iter {}: {}".format(min_iters, t1 - t0))
-                        t1 = t0
-                        print("MinimizeRho: ", min_iters, " with ", len(active_indices), " active edges and ", len(sampled_inactive_indices), " inactive edges")
-                    min_iters += 1
-
-                '''
-
-                '''
-                #average_active_in_degree = np.mean(active_in_degrees)
-                current_sum = sum_active
-                current_count = len_active
-
-                # Create a list of potential edges with their potential impact
-                potential_edges = [(index, out_degree_cache[index]) for index in inactive_indices ]
-
-                # Sort potential edges by their ability to minimize the difference to average_active_in_degree
-                potential_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
-
-                # Initialize min_iters and the difference
-                min_iters = 0
-                difference = -1
-                new_average = average_in_degree
-                sampled_inactive_indices = []
-
-                # Greedily add edges until the difference is minimized or you reach some iteration limit
-                while min_iters < 10000 and potential_edges and abs(difference) < 3:
-                    best_edge = potential_edges.pop(0)  # Get the edge that minimizes the difference
-                    current_sum += best_edge[1]
-                    sampled_inactive_indices.append(best_edge[0])
-                    current_count += 1
-                    new_average = current_sum / current_count
-                    difference = abs(new_average - average_active_in_degree)
-
-                    # Optionally, print debug information every few iterations
-                    #if min_iters % 100 == 0:
-                    #    print(f"Iteration {min_iters}: Current difference = {difference}")
-
-                    min_iters += 1
-
-                #print(f"Final average in-degree after {min_iters} iterations is {new_average}, with difference = {difference}")
-                '''
-
-               
-                
 
                 # Current active degrees
                 active_degrees = out_degree_cache[active_indices]
@@ -1189,26 +925,6 @@ class Model:
                 while min_iters < 2000 and (total_edges) and abs(difference) < 10:
                     # Alternate between removing an active edge and adding an inactive edge
                     best_edge = None
-                    '''
-                    if min_iters % 2 == 0 and potential_inactive_edges:  # Add inactive edge
-                        best_edge = potential_inactive_edges.pop(0)
-                        current_sum += best_edge[1]
-                        current_count += 1
-                    elif potential_active_edges:  # Remove an active edge
-                        best_edge = potential_active_edges.pop(0)
-                        current_sum -= best_edge[1]
-                        current_count -= 1
-                        
-                        act_sum -= best_edge[1]
-                        act_count -= 1
-                        if act_count == 0:
-                            average_active_in_degree = 0.0
-                            continue
-                        else:
-                            average_active_in_degree = float(act_sum) / act_count
-                        
-                        #best_edge = None
-                    '''
                     if total_edges:
                         best_edge = total_edges.pop(0)
                         if best_edge[2] == 0:
@@ -1246,18 +962,6 @@ class Model:
                 #print("Final average in-degree after adjustment: {:.2f}".format(new_average))
                 #print("Target average active in-degree: {:.2f}".format(average_active_in_degree))
 
-                ''''''
-                '''
-                if isinstance(potential_active_edges,list):
-                    try:
-                        for edge in potential_active_edges:
-                            sampled_edges.append(edge[0])
-                    except TypeError as e:
-                        print(potential_active_edges)
-                        raise Exception(e)
-                else:
-                    sampled_edges.append(potential_active_edges)
-                '''
                 try:
                     if len_active == 0:
                         active_possible_edges_sub = [x for x in tweets_seen if x[3] == 1.0]
@@ -1301,18 +1005,6 @@ class Model:
                                         np.array([model.map_user_id[int(x[0])] for x in tweets_seen])]).flatten()
                     #print("probs ", probabilities)
                     tweets_seen = sorted(tweets_seen, key = lambda x: probabilities[tweets_seen.index(x)], reverse=True)
-            '''
-            elif ranking == 'WideDeep':
-                if cur_tick == 1 or len(tweets_seen) == 0:
-                    tweets_seen = self.random.choice(tweets_seen, size=min(len(tweets_seen), num_tweets), replace=False)
-                else:
-
-                    predictions = self.rec(input_fn=tf_utils.pandas_input_fn(df=pd.DataFrame({'user_id':[self.su_uids.index(user) for ix in range(len(tweets_seen))] ,\
-                                        'tweet_id':[model.map_user_id[int(x[0])] for x in tweets_seen]})))
-                    probabilities = [x['predictions'][0] for x in predictions]
-                    #print("probs ", probabilities)
-                    tweets_seen = sorted(tweets_seen, key = lambda x: probabilities[tweets_seen.index(x)], reverse=True)
-            '''
 
             
             #elif ranking == 'LogReg':
@@ -1322,12 +1014,6 @@ class Model:
 
         tweets_seen = tweets_seen[:num_tweets]
         self.tweets_seen_dict[user].union(set([x[2] for x in tweets_seen]))
-        #in_deg = self.net.graph.in_degree
-        #out_deg = self.net.graph.out_degree
-        #for tweet in tweets_seen:
-        #    #self.edges_seen["{}_{}".format(tweet[0], user)] = 0
-        #    self.edges_seen.add((tweet[0], user, float(in_deg(agent)), float(self.user_map[user]), float(out_deg(agent)), float(self.map_deg_friends[agent])))
-        #print("User {} asking for {} tweets saw {} tweets from a content pool of size {}".format(user, num_tweets, len(tweets_seen), len(self.content_pool)))
         return tweets_seen
     
     def start(self):
