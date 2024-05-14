@@ -50,37 +50,6 @@ from collections import deque
 
 import time
 
-def generate_network_file(fname: str, n_ranks: int, n_agents: int, kwargs: Dict[str, str] = {}):
-    """Generates a network file using repast4py.network.write_network.
-
-    Args:
-        fname: the name of the file to write to
-        n_ranks: the number of process ranks to distribute the file over
-        n_agents: the number of agents (node) in the network
-    """
-    g = gen_graph(n_agents, 3.0, kwargs)
-    #print("Nodes: ", [x for x in g.nodes])
-    try:
-        import nxmetis
-        write_network(g, 'exposure_network', fname, n_ranks, partition_method='metis')
-    except ImportError:
-        write_network(g, 'exposure_network', fname, n_ranks)
-
-def split_network_file(fname: str, n_ranks: int, n_agents: int, kwargs: Dict[str, str] = {}):
-    """Split existing network file using repast4py.network.write_network.
-
-    Args:
-        fname: the name of the file to write to
-        n_ranks: the number of process ranks to distribute the file over
-        n_agents: the number of agents (node) in the network
-    """
-    g = nx.read_edgelist(fname)
-    #print("Nodes: ", [x for x in g.nodes])
-    try:
-        import nxmetis
-        write_network(g, 'exposure_network', fname , n_ranks, partition_method='metis')
-    except ImportError:
-        write_network(g, 'exposure_network', fname, n_ranks)
 
 
 
@@ -597,21 +566,16 @@ class Model:
         print("Rank: ", self.rank, "staring Tick: ", self.runner.schedule.tick)
         self.cache_edge_attributes()  # Update cache at the beginning of the step
         total_friends = [(fr.uid, fr.uid[2]) for x in self.context.agents() for fr in self.map_friends[x]] 
-        #print("done with gini")
-        #self.context.synchronize(restore_agent)
+
         self.context.request_agents(total_friends, restore_agent)
 
-        #print("huge likes  ", self.likes_tracker[self.likes_tracker > 100])
         if self.ranking == 'NMF':
             nmf_model = NMF(n_components=4, init='random', random_state=0)
-            #rt_tracker = lil_matrix((5599, len(who_follows_who['tid'].value_counts().index)), dtype=np.int16)
             try:
                 self.W = lil_matrix(nmf_model.fit_transform(self.likes_tracker))
                 self.H = lil_matrix(nmf_model.components_)
                 self.rec = self.W.dot(self.H)
-                #print("REC SIZE IS ", self.rec.shape)
-                #print("LT SIZE IS ", self.likes_tracker.shape)
-                #print("full graph size is ", len(full_graph.nodes))
+
             except ValueError as e:
                 print(e)
                 print(np.mean(self.likes_tracker.data), np.min(self.likes_tracker.data))
@@ -766,10 +730,6 @@ class Model:
         num_tweets = len(self.content_pool)
         print("Rank: ", self.rank, " Tick: ", self.runner.schedule.tick, " with ", len(self.edges_seen), " edges seen ", " with ", num_tweets, " tweets in the content pool")
 
-        #self.context.synchronize(restore_agent)
-        
-        #print("done with local bias")
-        
 
         for agent in agents:
             agent.last_nodes_seen = set()
@@ -780,7 +740,6 @@ class Model:
             if self.runner.schedule.tick == 24:
                 self.user_map = self.rewire_synth(self.kx_corr)
 
-        #print("Rank: ", self.rank, "Tick: ", self.runner.schedule.tick, "Local Bias: ", self.exp_measures.local_bias, "Gini: ", self.exp_measures.gini)
         if self.runner.schedule.tick % 24 == 0:
             if self.activity != 'Empirical' and int(num_tweets) > 0:
                 self.content_pool = self.content_pool[-int(num_tweets)//2:]
@@ -813,8 +772,6 @@ class Model:
         
         cur_tick = self.runner.schedule.tick
         #print("Rank: ", self.rank, "Tick: ", cur_tick, "User: ", user, "switch_ranking: ", self.switch_ranking, "Ranking: ", ranking)
-        #int(x[0]) in fof or
-        #tweets_seen = [x for x in self.content_pool if (int(x[0]) in fof) and x[2] not in self.tweets_seen_dict[user]][-1000:]#[-int(len(self.content_pool)/2):] if x[0] in neighs]
 
         # Use deque to collect only the last 1000 items meeting the criteria
         tweets_seen_deque = deque(maxlen=1000)
@@ -886,12 +843,7 @@ class Model:
                                     (self.num_edges_seen + len_active + len_inactive)
 
                 t1 = time.time()
-                #print("Time to compute averages: ", t1 - t0)
 
-                #sampled_active_indices = self.random.choice(active_indices, size=min(len_active // 2, 50), replace=False)
-                #average_active_in_degree = np.mean(out_degree_cache[sampled_active_indices])
-
-                #sum_sampled_active = np.sum(out_degree_cache[sampled_active_indices])
 
 
 
@@ -967,17 +919,7 @@ class Model:
                         active_possible_edges_sub = [x for x in tweets_seen if x[3] == 1.0]
                     if len_inactive == 0:
                         inactive_possible_edges_sub = [x for x in tweets_seen if x[3] == 0.0]
-                    #if isinstance(active_possible_edges_sub, list):
-                    #    active_possible_edges_sub = np.array(active_possible_edges_sub)
-                    #if isinstance(inactive_possible_edges_sub, list):
-                    #    inactive_possible_edges_sub = np.array(inactive_possible_edges_sub)
-                    '''
-                    active_possible_edges_sub = [tweets_seen[ix] for ix in active_indices]
-                    inactive_possible_edges_sub = [tweets_seen[ix] for ix in sampled_inactive_indices]
-                    
-                    #active_possible_edges_sub = np.concatenate([active_possible_edges_sub, inactive_possible_edges_sub])
-                    active_possible_edges_sub.extend(inactive_possible_edges_sub)
-                    '''
+
                     try:
                         active_possible_edges_sub = [tweets_seen[ix] for ix in sampled_edges]
                     except TypeError as e:
@@ -1007,8 +949,7 @@ class Model:
                     tweets_seen = sorted(tweets_seen, key = lambda x: probabilities[tweets_seen.index(x)], reverse=True)
 
             
-            #elif ranking == 'LogReg':
-            #    tweets_seen = sorted(tweets_seen, key=lambda x: agent.mdl.], reverse=True)
+
             
 
 

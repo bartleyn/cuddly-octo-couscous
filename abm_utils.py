@@ -345,3 +345,36 @@ def train_logit(model):
 
     # Now you can rank tweets based on the predicted probabilities
     collated_tweet_df = collated_tweet_df.iloc[np.argsort(predictions)[::-1]]
+
+
+def generate_network_file(fname: str, n_ranks: int, n_agents: int, kwargs: Dict[str, str] = {}):
+    """Generates a network file using repast4py.network.write_network.
+
+    Args:
+        fname: the name of the file to write to
+        n_ranks: the number of process ranks to distribute the file over
+        n_agents: the number of agents (node) in the network
+    """
+    g = gen_graph(n_agents, 3.0, kwargs)
+    #print("Nodes: ", [x for x in g.nodes])
+    try:
+        import nxmetis
+        write_network(g, 'exposure_network', fname, n_ranks, partition_method='metis')
+    except ImportError:
+        write_network(g, 'exposure_network', fname, n_ranks)
+
+def split_network_file(fname: str, n_ranks: int, n_agents: int, kwargs: Dict[str, str] = {}):
+    """Split existing network file using repast4py.network.write_network.
+
+    Args:
+        fname: the name of the file to write to
+        n_ranks: the number of process ranks to distribute the file over
+        n_agents: the number of agents (node) in the network
+    """
+    g = nx.read_edgelist(fname)
+    #print("Nodes: ", [x for x in g.nodes])
+    try:
+        import nxmetis
+        write_network(g, 'exposure_network', fname , n_ranks, partition_method='metis')
+    except ImportError:
+        write_network(g, 'exposure_network', fname, n_ranks)
