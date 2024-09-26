@@ -1,3 +1,8 @@
+import networkx as nx
+from typing import Dict
+from mpi4py import MPI
+import numpy as np
+from dataclasses import dataclass
 import mesa
 import numpy as np
 import networkx as nx
@@ -7,49 +12,93 @@ import pandas as pd
 from scipy.spatial.distance import jaccard, pdist, cdist
 
 
-def compute_std_likes(model):
-    return np.std(model.likes_tracker.sum(axis=1))
 
-def compute_mean_likes(model):
-    return np.mean(model.likes_tracker.sum(axis=1))
+'''
+    gini_positive: float
+    gini_negative: float
+    std_likes_positive: float
+    std_likes_negative: float
+    num_edges_seen_positive: float
+    num_edges_seen_negative: float
+    precision_at_30_positive: float
+    precision_at_30_negative: float
+    '''
+def compute_std_likes(model, type='all'):
+    if type == 'all':
+        return np.std(model.likes_tracker.sum(axis=1))
+    if type == 'positive':
+        return np.std(model.likes_tracker[[model.su_uids_mapped.index(x) for x in model.positive_users],:].sum(axis=1))
+    else:
+        return np.std(model.likes_tracker[[model.su_uids_mapped.index(x) for x in model.negative_users],:].sum(axis=1))
 
-def compute_mean_tweets_per_user(model):
+def compute_mean_likes(model, type='all'):
+    if type == 'all':
+        return np.mean(model.likes_tracker.sum(axis=1))
+    if type == 'positive':
+        print("HELLO PS USERS ", list(model.positive_users)[:10])
+        print("num map user id vals ", len(model.map_user_id))
+        print("first tep of map user id ", list(model.su_uids_mapped)[:10], " and if 0 in it: ", 0 in model.map_user_id)
+        return np.mean(model.likes_tracker[[model.su_uids_mapped.index(x) for x in model.positive_users],:].sum(axis=1))
+    if type == 'negative':
+        return np.mean(model.likes_tracker[[model.su_uids_mapped.index(x) for x in model.negative_users],:].sum(axis=1))
+
+
+def compute_mean_tweets_per_user(model, type='all'):
     #compute the mean number of tweets per user in the content_pool
     #return np.mean(model.tweets_tracker.sum(axis=0))
-    return np.mean(model.likes_tracker.sum(axis=0))
+    if type == 'all':
+        return np.mean(model.likes_tracker.sum(axis=0))
+    if type == 'positive':
+        return np.mean(model.likes_tracker[[model.su_uids_mapped.index(x) for x in model.positive_users],:].sum(axis=0))
+    if type == 'negative':
+        return np.mean(model.likes_tracker[[model.su_uids_mapped.index(x) for x in model.negative_users],:].sum(axis=0))
 
-def compute_std_tweets_per_user(model):
+
+def compute_std_tweets_per_user(model, type='all'):
     return np.std(model.likes_tracker.sum(axis=0))
 
-def compute_precision_at_k(model,k):
+def compute_precision_at_k(model,k, type='all'):
+    if type == 'all':
+        ix = [True] * 5599
+    if type == 'positive':
+        ix = [model.su_uids_mapped.index(x) for x in model.positive_users]
+    if type == 'negative':
+        ix = [model.su_uids_mapped.index(x) for x in model.negative_users]
+
     if k == 10:
-        return np.mean(model.precision_tracker[:,0])
+        return np.mean(model.precision_tracker[ix,0])
     elif k == 20:
-        return np.mean(model.precision_tracker[:,1])
+        return np.mean(model.precision_tracker[ix,1])
     elif k == 30:
-        return np.mean(model.precision_tracker[:,2])
+        return np.mean(model.precision_tracker[ix,2])
     else:
         return -1
         #return np.mean(model.precision_tracker[:,2])
 
-def local_bias(model, attn_func = None):
+def local_bias(model, type='all', attn_func = None):
     edges = np.array(list(model.edges_seen))#np.array([[int(x) for x in edge.split('_')] for i, edge in enumerate(model.edges_seen)])
     #np.array([(friend, user) for friend in model.edges_seen for user in model.edges_seen[friend]])
 
-    #  each edge is (friend, cur_user, (tweet[0], self.id, float(in_deg(agent)), float(model.user_map[agent.id]), float(out_deg(agent)), float(model.map_deg_friends[agent])))
+    ###  each edge is (friend, cur_user, (tweet[0], self.id, float(in_deg(agent)), float(model.user_map[agent.id]), float(out_deg(agent)), float(model.map_deg_friends[agent])))
 
+    #each edge is (friend id, 
+    #              currrent user id, 
+    #              current user out_degree, 
+    #              friend 0/1, 
+    #              friend out_degree, float(model.map_deg_friends.get(agent, 0))))
     user_map = model.user_map
     G_in = model.in_degree#model.net.graph.in_degree # fix the in degree
     mean_in_deg = model.mean_in_deg
     true_prev = model.true_prev
     in_deg = G_in
     num_edges = edges.shape[0]
+
     if num_edges <= 1:
         print(" num edges <= 1 but edge shape {}".format(edges.shape))
         return -true_prev
     exp_val = 0.0
     vals = edges#np.zeros((edges.shape[0], 2))
-   
+    current_user_labels = [user_map[x] if x in user_map else -1 for x in vals[:,1] ]
     #print("edges: ", edges)
     #vectorize
     try:
@@ -64,41 +113,19 @@ def local_bias(model, attn_func = None):
         print(edges[:,0])
         
         raise Exception
-    '''
-    if attn_func is None:
-        def attn_func_int(edge):
-            return (1.0/in_deg(edge[1])) if in_deg(edge[1]) > 0 else 0.0
-        attn_func = attn_func_int
-        #attn_func = lambda edge: (1.0/in_deg(edge[1])) if in_deg(edge[1]) > 0 else 0.0
-    num_edges = len(edges)
-    exp_val = 0.0
-    #def map_func(edge):
-    #   return user_map[edge[1]] * attn_func(edge) / num_edges
-    #vals = map(map_func, edges)
-    vals = [user_map[edge[1]]*attn_func(edge) / num_edges for edge in edges]
-    exp_val = np.nansum(list(vals))
-    '''
+ 
     
     print("mean {}\t sum{}\td {}".format(mean_in_deg, np.nansum(vals[:,3]), vals[:,2]))
-    
-    return mean_in_deg * np.nansum(vals[:,3]) - true_prev
+    if type == 'all':
+        return mean_in_deg * np.nansum(vals[:,3]) - true_prev
+    elif type == 'positive':
+        return mean_in_deg * np.nansum(vals[[user_map[x] == 1 if x in user_map else False for x in vals[:,1]],3]) - true_prev
+    else:
+        return mean_in_deg * np.nansum(vals[[user_map[x] == 0 if x in user_map else False for x in vals[:,1]], 3]) - true_prev
 
     return np.mean(list(dict(in_deg).values())) * exp_val - true_prev
 
-'''
-def compute_gini(model):
-    uniq_vals, counts = np.unique([x[0] for x in model.edges_seen], return_counts=True)
-    #num times seen each edge 
-    #agent_wealths = [agent.wealth for agent in model.schedule.agents]
-    agent_wealths = counts
-    x = sorted(agent_wealths)
-    N = model.num_agents
-    try:
-        B = sum(xi * (N - i) for i, xi in enumerate(x)) / (N * sum(x))
-    except ZeroDivisionError:
-        return 0
-    return 1 + (1 / N) - 2 * B
-'''
+
 
 def compute_jaccard(model, ):
     # homogenization being the avg jaccard index of a node and all that nodes friends
@@ -108,12 +135,7 @@ def compute_jaccard(model, ):
     len_feed = model.len_feed
     model_user_map = model.user_map
     for agent_id in agents:
-        #if len(agent_id.last_nodes_seen) < 30 or any([len(agents[f_id].last_nodes_seen) < 30 for f_id in agent_id.friends]):
-        #    continue
-        
-        #if not enough nodes seen, assume seen 0s
-        #friend_items = np.array([[model_user_map[x] for x in agents[friend_id].last_nodes_seen] + [0 for x in range(len_feed - len(agents[friend_id].last_nodes_seen))]\
-        #                        for friend_id in agent_id.friends])
+
         agent_friends = agent_id.friends
         friend_mat = np.zeros((len(agent_id.friends)+1, len_feed))
         friend_mat[0,:] = np.array([model_user_map[x] for x in agent_id.last_nodes_seen][:len_feed] + [0 for x in range(len_feed - len(agent_id.last_nodes_seen))])
@@ -145,7 +167,7 @@ def compute_jaccard(model, ):
 
     return np.mean(sims) if any([x >= 0 for x in sims]) else -1
 
-def compute_gini(model, ):
+def compute_gini(model, type='all'):
     
     '''total_times_user_seen = [x for x in df_obs.sum(axis=1) if x > 0.]
     num_users = len(np.unique(df_obs.nonzero()[0]))
@@ -161,7 +183,14 @@ def compute_gini(model, ):
     return gini'''
     """Calculate the Gini coefficient of a numpy array."""
     # All values are treated equally, arrays must be 1d:
-    uniq_vals, counts = np.unique([x[0] for x in model.edges_seen], return_counts=True)
+    if type == 'all':
+
+        uniq_vals, counts = np.unique([x[0] for x in model.edges_seen], return_counts=True)
+    elif type == 'positive':
+        uniq_vals, counts = np.unique([x[0] for x in model.edges_seen if model.user_map.get(x[1],-1) == 1], return_counts=True)
+    else:
+        uniq_vals, counts = np.unique([x[0] for x in model.edges_seen if model.user_map.get(x[1],-1) == 0], return_counts=True)
+
     array = counts.astype('float64')
     array = array.flatten()
     try:
@@ -213,7 +242,7 @@ def adjust_assort(G, goal_assort):
 
 
 
-    def corr(self, y, um):
+    def corr(in_degree, friend_dist, y, um):
         avg_pos_degree = np.mean([self.graph.in_degree[x] for x in um])
         avg_degree = np.mean(self.friend_dist)
         std_deg = np.std(self.friend_dist)
@@ -224,9 +253,9 @@ def adjust_assort(G, goal_assort):
         
        
 
-    def rewire_synth(self, goal_corr):
-        cur_user_map = self.user_map
-        list_user_map = list(self.user_map.keys())
+    def rewire_synth(user_map, in_degree, friend_dist, goal_corr):
+        cur_user_map = user_map
+        list_user_map = list(user_map.keys())
         
         delta = 100000
 
@@ -238,7 +267,7 @@ def adjust_assort(G, goal_assort):
         positive_nodes = [rev_mapping[x] for x in np.nonzero(pos_neg_bf)[0]]#{x:0 for x in rev_user_map[1] if x in degrees}#set([node for node,assignment in zip(list_user_map, cur_assignments) if assignment == 1])
         negative_nodes = [rev_mapping[x] for x in np.nonzero(pos_neg_bf == 0)[0]]#{x:0 for x in rev_user_map[0] if x in degrees}#set([node for node,assignment in zip(list_user_map, cur_assignments) if assignment == 0])
         #cur_corr = corr(degree_dist, [*cur_user_map.values()], [*positive_nodes])
-        cur_corr = self.corr(pos_neg_bf, positive_nodes)
+        cur_corr = corr(in_degree, friend_dist,pos_neg_bf, positive_nodes)
 
         #print("done with ", goal_corr, " with corr ", cur_corr)
         iters = 0

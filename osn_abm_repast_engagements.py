@@ -52,7 +52,6 @@ import time
 
 
 
-
 global map_user_id 
 map_user_id = {}
 
@@ -66,16 +65,185 @@ full_graph = nx.read_edgelist('twittergraph.edgelist_1_5m.txt', create_using=nx.
 
 
 
-
-
-
 model = None
 
 
+def minimize_rho_greedy(self, tweets_seen):
+
+    out_degree_cache_ix = {int(x[0]): ix for ix, x in enumerate(tweets_seen)}
+    out_degree_cache = np.array([self.out_degree[int(x[0])] for x in tweets_seen])
+
+    # Cache results to minimize repeated calculations
+    active_indices = [out_degree_cache_ix[int(x[0])] for x in tweets_seen if x[3] == 1.0]
+    inactive_indices = [out_degree_cache_ix[int(x[0])] for x in tweets_seen if x[3] == 0.0]
+
+    t0 = time.time()
+
+    # Use numpy advanced indexing for efficient computation
+    average_active_in_degree = np.mean(out_degree_cache[active_indices])
+
+    # Using numpy for summing to avoid recomputation and unnecessary indexing
+    sum_active = np.sum(out_degree_cache[active_indices])
+    sum_inactive = np.sum(out_degree_cache[inactive_indices])
+
+    # Precompute lengths since these are used multiple times
+    len_active = len(active_indices)
+    len_inactive = len(inactive_indices)
+
+    average_in_degree = (self.sum_out_degree_obs + sum_active + sum_inactive) / \
+                        (self.num_edges_seen + len_active + len_inactive)
+
+    t1 = time.time()
+
+
+    # Current active degrees
+    active_degrees = out_degree_cache[active_indices]
+    average_active_in_degree = np.mean(active_degrees)
+    current_sum = np.sum(active_degrees)
+    current_count = len(active_degrees)
+    act_sum = current_sum
+    act_count = current_count
+
+    # List potential edges and their degrees
+    potential_active_edges = [(index, out_degree_cache[index], 1) for index in active_indices]
+    potential_inactive_edges = [(index, out_degree_cache[index], 0) for index in inactive_indices]
+    total_edges = potential_active_edges + potential_inactive_edges
+    # Sort potential edges by their impact on the average
+    potential_active_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
+    potential_inactive_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
+    total_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
+    
+    # Initialize control variables
+    min_iters = 0
+    difference = 0.0
+    sampled_edges = []#[x[0] for x in potential_active_edges]
+    new_average = average_active_in_degree
+    prob_diff = 0.0
+
+
+    # Greedy adding edges
+    while min_iters < 2000 and (total_edges) and abs(difference) < 10:
+        best_edge = None
+        if total_edges:
+            best_edge = total_edges.pop(0)
+            if best_edge[2] == 0:
+                current_sum += best_edge[1]
+                current_count += 1
+            else:
+                current_sum += best_edge[1]
+                current_count += 1
+                act_sum += best_edge[1]
+                act_count += 1
+                if act_count == 0:
+                    average_active_in_degree = 0.0
+                    continue
+                else:
+                    average_active_in_degree = float(act_sum) / act_count
+                #best_edge = None
+        
+        total_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
+
+        if best_edge is not None:
+            prob_diff = ((act_count + current_sum) / ( current_count)) - self.true_prev
+            sampled_edges.append(best_edge[0])
+        
+        new_average = current_sum / current_count
+        difference = abs(new_average - average_active_in_degree)
+        
+        if min_iters % 100 == 0:
+            print(f"Iteration {min_iters}: Current difference = {difference}")
+        
+        min_iters += 1
+
+
+    try:
+        if len_active == 0:
+            active_possible_edges_sub = [x for x in tweets_seen if x[3] == 1.0]
+        if len_inactive == 0:
+            inactive_possible_edges_sub = [x for x in tweets_seen if x[3] == 0.0]
+
+        try:
+            active_possible_edges_sub = [tweets_seen[ix] for ix in sampled_edges]
+        except TypeError as e:
+            print("ts ", tweets_seen, " si ", sampled_edges)
+            raise Exception
+    except AttributeError:
+        try:
+            active_possible_edges_sub = np.concatenate([active_possible_edges_sub, inactive_possible_edges_sub])
+        except ValueError as e:
+            print(e)
+            print("ACTIVE P EDGES SUB ", active_possible_edges_sub, " INACTIVE P EDGES SUB ", inactive_possible_edges_sub)
+            raise Exception
+    except ValueError as e:
+            print(e)
+            print("ACTIVE P EDGES SUB ", active_possible_edges_sub, " INACTIVE P EDGES SUB ", inactive_possible_edges_sub)
+            raise Exception
+    return active_possible_edges_sub
+
+def predict_ncf(self):
+    #data is a pandas dataframe with columns user_id, tweet_id, and like from each agents' liked tweets
+    data = pd.DataFrame([{'user_id':self.su_uids.index(agent.id), 'tweet_id':self.map_user_id[tweet], 'like':1} for agent in self.context.agents() \
+                                                                            for tweet in agent.liked_tweets])
+    
+    
+    if len(data) == 0:
+        print("No data for NCF in rank ", self.rank)
+        data['user_id'] = []
+        data['tweet_id'] = []
+        data['like'] = []
+
+    num_users = 5600
+    num_tweets = self.total_nodes + 1
+    # Creating a LIL sparse matrix
+    data_matrix = lil_matrix((num_users, num_tweets), dtype=np.int8)
+
+    # Populate the matrix with likes
+    for _, row in data.iterrows():
+        user_id = row['user_id']
+        tweet_id = row['tweet_id']
+        like = row['like']
+        data_matrix[user_id, tweet_id] = like
+
+    data_matrix = data_matrix.tocoo()
+    
+    users = data_matrix.row
+    items = data_matrix.col
+    ratings = data_matrix.data
+
+    
+    # Neural Collaborative Filtering (NCF) model
+
+    # User Embedding Path
+    input_users = Input(shape=(1,))
+    embedding_users = Embedding(num_users, 15)(input_users)
+    flatten_users = Flatten()(embedding_users)
+
+    # Item Embedding Path
+    input_items = Input(shape=(1,))
+    embedding_items = Embedding(num_tweets, 15)(input_items)
+    flatten_items = Flatten()(embedding_items)
+
+    # Concatenate the flattened embeddings
+    concatenated = Concatenate()([flatten_users, flatten_items])
+
+    # Add one or more Dense layers for learning the interaction
+    dense = Dense(128, activation='relu')(concatenated)
+    output = Dense(1)(dense)
+
+    if self.runner.schedule.tick >= 0:
+        # Create and compile the model
+        ncf_model = tfmodel(inputs=[input_users, input_items], outputs=output)
+        ncf_model.compile(loss=binary_focal_crossentropy, optimizer=Adam(0.001))
+
+        # Train the model
+        if len(data) > 0:
+            ncf_model.fit([users, items], ratings, epochs=10, batch_size=64, verbose=0)
+        else:
+            print("No data for NCF in rank ", self.rank)
+    return ncf_model
 
 def predict_wide_deep(self):
    
-
 
     #data is a pandas dataframe with columns user_id, tweet_id, and like from each agents' liked tweets
     data = pd.DataFrame([{'user_id':self.su_uids.index(agent.id), 'tweet_id':self.map_user_id[tweet], 'like':1} for agent in self.context.agents() \
@@ -201,7 +369,7 @@ class ExposureAgent(core.Agent):
 
         A non-ghost agent will save its state using this
         method, and any ghost agents of this agent will
-        be updated with that data (self.received_rumor).
+        be updated with that data ().
 
         Returns:
             The agent's state
@@ -216,7 +384,7 @@ class ExposureAgent(core.Agent):
         agent on some rank other than its local one.
 
         Args:
-            data: the new agent state (received_rumor)
+            data: the new agent state 
         """
         if wealth > 0.0:
             self.wealth += wealth
@@ -268,8 +436,6 @@ class ExposureAgent(core.Agent):
         if self.ranking == None:
             return
         
-        
-
         t0 = time.time()
         # get the tweets that the user sees
         tweets_seen = model.serve_tweets(num_tweets_consumed, self.id, ranking=self.ranking) 
@@ -386,10 +552,6 @@ def restore_agent(agent_data):
     return ExposureAgent(uid_[0], uid_[1], uid_[2], *agent_data[1:])
 
 
-@dataclass
-class RumorCounts:
-    total_rumor_spreaders: int
-    new_rumor_spreaders: int
 
 @dataclass
 class ExposureMeasures:
@@ -505,6 +667,8 @@ class Model:
         self.content_pool = []
         self.edges_seen = set()
         self.num_edges_seen = 0
+        self.num_edges_seen_pos = 0
+        self.num_edges_seen_neg = 0
         self.true_prev = params['true_prev']
         self.likes_tracker = lil_matrix((5599, len(full_graph.nodes)), dtype=np.uint16)
         self.precision_tracker = lil_matrix((5599, 3))
@@ -530,10 +694,8 @@ class Model:
         self.map_deg_friends = {user: sum([self.follower_dist[fr] if fr in self.follower_dist else 0.0 for fr in self.map_friends[user]]) for user in self.map_friends}
 
     
-
-
         
-        self.exp_measures = ExposureMeasures(-1.,-1., -1., -1, -1, -1, -1, -1, -1, -1)
+        self.exp_measures = ExposureMeasures(-1.,-1., -1., -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
 
         loggers = logging.create_loggers(self.exp_measures, op=MPI.SUM, rank=self.rank)
         self.data_set = logging.ReducingDataSet(loggers, comm, params['counts_file'])
@@ -548,7 +710,6 @@ class Model:
         for like in likes:
             self.likes_tracker[self.su_uids.index(real_userid), like] += 1
 
-        #self.likes_tracker[self.su_uids.index(real_userid), [x[0] for x in likes]] += 1
 
     def at_end(self):
         self.data_set.close()
@@ -596,67 +757,12 @@ class Model:
         if self.ranking == 'NCF':
                 
 
-            #data is a pandas dataframe with columns user_id, tweet_id, and like from each agents' liked tweets
-            data = pd.DataFrame([{'user_id':self.su_uids.index(agent.id), 'tweet_id':self.map_user_id[tweet], 'like':1} for agent in self.context.agents() \
-                                                                                    for tweet in agent.liked_tweets])
+            if cur_tick == 1:
+                self.rec = None
+            else:
+                self.rec = predict_ncf(self).predict
+
             
-            
-            if len(data) == 0:
-                print("No data for NCF in rank ", self.rank)
-                data['user_id'] = []
-                data['tweet_id'] = []
-                data['like'] = []
-
-            num_users = 5600
-            num_tweets = self.total_nodes + 1
-            # Creating a LIL sparse matrix
-            data_matrix = lil_matrix((num_users, num_tweets), dtype=np.int8)
-
-            # Populate the matrix with likes
-            for _, row in data.iterrows():
-                user_id = row['user_id']
-                tweet_id = row['tweet_id']
-                like = row['like']
-                data_matrix[user_id, tweet_id] = like
-
-            data_matrix = data_matrix.tocoo()
-            
-            users = data_matrix.row
-            items = data_matrix.col
-            ratings = data_matrix.data
-
-           
-            # Neural Collaborative Filtering (NCF) model
-
-            # User Embedding Path
-            input_users = Input(shape=(1,))
-            embedding_users = Embedding(num_users, 15)(input_users)
-            flatten_users = Flatten()(embedding_users)
-
-            # Item Embedding Path
-            input_items = Input(shape=(1,))
-            embedding_items = Embedding(num_tweets, 15)(input_items)
-            flatten_items = Flatten()(embedding_items)
-
-            # Concatenate the flattened embeddings
-            concatenated = Concatenate()([flatten_users, flatten_items])
-
-            # Add one or more Dense layers for learning the interaction
-            dense = Dense(128, activation='relu')(concatenated)
-            output = Dense(1)(dense)
-
-            if self.runner.schedule.tick >= 0:
-                # Create and compile the model
-                ncf_model = tfmodel(inputs=[input_users, input_items], outputs=output)
-                ncf_model.compile(loss=binary_focal_crossentropy, optimizer=Adam(0.001))
-
-                # Train the model
-                if len(data) > 0:
-                    ncf_model.fit([users, items], ratings, epochs=10, batch_size=64, verbose=0)
-                else:
-                    print("No data for NCF in rank ", self.rank)
-            self.rec = ncf_model.predict
-
         
         for node in self.context.agents():
             node.step()
@@ -676,7 +782,7 @@ class Model:
         self.context.synchronize(restore_agent)
         t1 = time.time()
         print("Rank: ", self.rank, "Tick: ", self.runner.schedule.tick, "done with step and sync stuff in ", t1 - t0)
-        if self.ranking == 'MinimizeRho' and self.rank != 0:
+        if self.ranking.startswith('MinimizeRho') and self.rank != 0 :
 
             t0 = time.time()
             obs_edges = [uid for uid, attrs in self.edge_cache.items() if attrs['seen'] == 1.0]
@@ -696,7 +802,7 @@ class Model:
             #agent.last_nodes_seen = set()
 
             self.num_edges_seen = len(self.edges_seen) if self.edges_seen is not None else 0
-            self.exp_measures.local_bias = local_bias(self)
+            self.exp_measures.local_bias = local_bias(self, 'all')
             self.exp_measures.gini = compute_gini(self)
             self.exp_measures.std_likes = compute_std_likes(self)
             self.exp_measures.num_edges_seen = self.num_edges_seen
@@ -705,6 +811,7 @@ class Model:
             self.exp_measures.std_tweets_per_user = compute_std_tweets_per_user(self)
             self.exp_measures.precision_at_10 = compute_precision_at_k(self, 10)
             self.exp_measures.precision_at_30 = compute_precision_at_k(self, 30)
+
             cur_user_map = user_map
             list_user_map = list(user_map.keys())
             self.sum_out_degree_obs = np.mean([x[2] for x in self.edges_seen])
@@ -734,11 +841,11 @@ class Model:
         for agent in agents:
             agent.last_nodes_seen = set()
 
-        if self.kx_corr > 0:
-            if self.runner.schedule.tick == 12:
-                self.user_map = self.rewire_synth(self.kx_corr * 0.5)
-            if self.runner.schedule.tick == 24:
-                self.user_map = self.rewire_synth(self.kx_corr)
+        #if self.kx_corr > 0:
+        #    if self.runner.schedule.tick == 12:
+        #        self.user_map = rewire_synth(self.user_map, self.graph.in_degree, self.friend_dist, self.kx_corr * 0.5)
+        #    if self.runner.schedule.tick == 24:
+        #        self.user_map = rewire_synth(self.user_map, self.graph.in_degree, self.friend_dist, self.kx_corr)
 
         if self.runner.schedule.tick % 24 == 0:
             if self.activity != 'Empirical' and int(num_tweets) > 0:
@@ -771,7 +878,6 @@ class Model:
             return
         
         cur_tick = self.runner.schedule.tick
-        #print("Rank: ", self.rank, "Tick: ", cur_tick, "User: ", user, "switch_ranking: ", self.switch_ranking, "Ranking: ", ranking)
 
         # Use deque to collect only the last 1000 items meeting the criteria
         tweets_seen_deque = deque(maxlen=1000)
@@ -818,126 +924,12 @@ class Model:
                     raise IndexError
             elif ranking == 'Chronological':
                 tweets_seen = sorted(tweets_seen, key=lambda x: x[1], reverse=True)
-            elif ranking == 'MinimizeRho':
-                out_degree_cache_ix = {int(x[0]): ix for ix, x in enumerate(tweets_seen)}
-                out_degree_cache = np.array([self.out_degree[int(x[0])] for x in tweets_seen])
+            elif ranking == 'MinimizeRho' or ranking == 'MinimizeRhoNoRandom':
 
-                # Cache results to minimize repeated calculations
-                active_indices = [out_degree_cache_ix[int(x[0])] for x in tweets_seen if x[3] == 1.0]
-                inactive_indices = [out_degree_cache_ix[int(x[0])] for x in tweets_seen if x[3] == 0.0]
-
-                t0 = time.time()
-
-                # Use numpy advanced indexing for efficient computation
-                average_active_in_degree = np.mean(out_degree_cache[active_indices])
-
-                # Using numpy for summing to avoid recomputation and unnecessary indexing
-                sum_active = np.sum(out_degree_cache[active_indices])
-                sum_inactive = np.sum(out_degree_cache[inactive_indices])
-
-                # Precompute lengths since these are used multiple times
-                len_active = len(active_indices)
-                len_inactive = len(inactive_indices)
-
-                average_in_degree = (self.sum_out_degree_obs + sum_active + sum_inactive) / \
-                                    (self.num_edges_seen + len_active + len_inactive)
-
-                t1 = time.time()
-
-
-
-
-                # Current active degrees
-                active_degrees = out_degree_cache[active_indices]
-                average_active_in_degree = np.mean(active_degrees)
-                current_sum = np.sum(active_degrees)
-                current_count = len(active_degrees)
-                act_sum = current_sum
-                act_count = current_count
-
-                # List potential edges and their degrees
-                potential_active_edges = [(index, out_degree_cache[index], 1) for index in active_indices]
-                potential_inactive_edges = [(index, out_degree_cache[index], 0) for index in inactive_indices]
-                total_edges = potential_active_edges + potential_inactive_edges
-                # Sort potential edges by their impact on the average
-                potential_active_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
-                potential_inactive_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
-                total_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
                 
-                # Initialize control variables
-                min_iters = 0
-                difference = 0.0
-                sampled_edges = []#[x[0] for x in potential_active_edges]
-                new_average = average_active_in_degree
-                prob_diff = 0.0
-
-
-                # Greedy alternation between adding and removing edges
-                #while min_iters < 2000 and (potential_active_edges or potential_inactive_edges) and (abs(difference) < 10 or prob_diff < 0.05):
-                while min_iters < 2000 and (total_edges) and abs(difference) < 10:
-                    # Alternate between removing an active edge and adding an inactive edge
-                    best_edge = None
-                    if total_edges:
-                        best_edge = total_edges.pop(0)
-                        if best_edge[2] == 0:
-                            current_sum += best_edge[1]
-                            current_count += 1
-                        else:
-                            current_sum += best_edge[1]
-                            current_count += 1
-                            act_sum += best_edge[1]
-                            act_count += 1
-                            if act_count == 0:
-                                average_active_in_degree = 0.0
-                                continue
-                            else:
-                                average_active_in_degree = float(act_sum) / act_count
-                            #best_edge = None
-                    
-                    #if min_iters % 2 == 0:
-                    #potential_active_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
-                    #potential_inactive_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
-                    total_edges.sort(key=lambda x: abs((current_sum + x[1]) / (current_count + 1) - average_active_in_degree))
-
-                    if best_edge is not None:
-                        prob_diff = ((act_count + current_sum) / ( current_count)) - self.true_prev
-                        sampled_edges.append(best_edge[0])
-                    
-                    new_average = current_sum / current_count
-                    difference = abs(new_average - average_active_in_degree)
-                    
-                    if min_iters % 100 == 0:
-                        print(f"Iteration {min_iters}: Current difference = {difference}")
-                    
-                    min_iters += 1
-
-                #print("Final average in-degree after adjustment: {:.2f}".format(new_average))
-                #print("Target average active in-degree: {:.2f}".format(average_active_in_degree))
-
-                try:
-                    if len_active == 0:
-                        active_possible_edges_sub = [x for x in tweets_seen if x[3] == 1.0]
-                    if len_inactive == 0:
-                        inactive_possible_edges_sub = [x for x in tweets_seen if x[3] == 0.0]
-
-                    try:
-                        active_possible_edges_sub = [tweets_seen[ix] for ix in sampled_edges]
-                    except TypeError as e:
-                        print("ts ", tweets_seen, " si ", sampled_edges)
-                        raise Exception
-                except AttributeError:
-                    try:
-                        active_possible_edges_sub = np.concatenate([active_possible_edges_sub, inactive_possible_edges_sub])
-                    except ValueError as e:
-                        print(e)
-                        print("ACTIVE P EDGES SUB ", active_possible_edges_sub, " INACTIVE P EDGES SUB ", inactive_possible_edges_sub)
-                        raise Exception
-                except ValueError as e:
-                        print(e)
-                        print("ACTIVE P EDGES SUB ", active_possible_edges_sub, " INACTIVE P EDGES SUB ", inactive_possible_edges_sub)
-                        raise Exception
-                tweets_seen = active_possible_edges_sub
-                tweets_seen = self.random.choice(tweets_seen, size=len(tweets_seen), replace=False)
+                tweets_seen = minimize_rho_greedy(self, tweets_seen)
+                if ranking == 'MinimizeRho':
+                    tweets_seen = self.random.choice(tweets_seen, size=len(tweets_seen), replace=False)
 
             elif ranking == 'NCF' or ranking == 'WideDeep':
                 if cur_tick == 1 or len(tweets_seen) == 0:
@@ -948,9 +940,7 @@ class Model:
                     #print("probs ", probabilities)
                     tweets_seen = sorted(tweets_seen, key = lambda x: probabilities[tweets_seen.index(x)], reverse=True)
 
-            
-
-            
+        
 
 
         tweets_seen = tweets_seen[:num_tweets]
@@ -969,61 +959,7 @@ class Model:
 
         return (p_pos / (std_deg * std_vals)) * np.abs(avg_pos_degree - avg_degree)
         
-
-    def rewire_synth(self, goal_corr):
-        cur_user_map = user_map
-        list_user_map = list(user_map.keys())
-        
-        delta = 100000
-
-        #rev_user_map = {0:{x:0 for x in cur_user_map if cur_user_map[x] == 0}, 1:{x:0 for x in cur_user_map if cur_user_map[x] == 1}}
-        pos_neg_bf = np.array([cur_user_map[x] for x in cur_user_map])
-        posn_mapping = {user:ix for ix, user in enumerate(list_user_map)}
-        rev_mapping = {ix: user for ix, user in enumerate(list_user_map)}
-
-        positive_nodes = [rev_mapping[x] for x in np.nonzero(pos_neg_bf)[0]]#{x:0 for x in rev_user_map[1] if x in degrees}#set([node for node,assignment in zip(list_user_map, cur_assignments) if assignment == 1])
-        negative_nodes = [rev_mapping[x] for x in np.nonzero(pos_neg_bf == 0)[0]]#{x:0 for x in rev_user_map[0] if x in degrees}#set([node for node,assignment in zip(list_user_map, cur_assignments) if assignment == 0])
-        #cur_corr = corr(degree_dist, [*cur_user_map.values()], [*positive_nodes])
-        cur_corr = self.corr(pos_neg_bf, positive_nodes)
-
-        #print("done with ", goal_corr, " with corr ", cur_corr)
-        iters = 0
-
-        np_rand_choice = np.random.choice
-        list_user_map_index = list_user_map.index
-        #print("LENGTH OF FRIEND DIST AND POSN MAPPING {} {} {}".format(len(self.friend_dist), len(list_user_map), len(map_user_id)))
-        while (cur_corr < goal_corr) and (iters < 10000):
-
-            #es. For example, to increase ρkx, we randomly
-            #choose nodes v1 with x = 1 and v0 with x = 0 and swap their attributes if the degree of v0 is
-            #greater than the degree of v1. W
-            
-            #rand_pos = np_rand_choice(list([x for x in positive_nodes]), size=1)[0]
-            rand_pos = np_rand_choice([rev_mapping[x] for x in np.nonzero(pos_neg_bf)[0]], size=min(100000, int(len(list_user_map)/100)), replace=False)
-
-            rand_neg = np_rand_choice([rev_mapping[x] for x in np.nonzero(pos_neg_bf == 0)[0]], size=min(100000, int(len(list_user_map)/100)), replace=False)
-            
-            degrees_pos = [self.friend_dist[posn_mapping[x]] for x in rand_pos]
-            degrees_neg = [self.friend_dist[posn_mapping[x]] for x in rand_neg]
-            neg_gt_pos = [neg >= pos for neg, pos in zip(degrees_neg, degrees_pos)]
-            if any(neg_gt_pos):
-                true_tups = [ix for ix, val in enumerate(neg_gt_pos) if val]
-                for tup_ix in true_tups:
-                    pos = rand_pos[tup_ix]
-                    neg = rand_neg[tup_ix]
-                    cur_user_map[pos] = 0
-                    cur_user_map[neg] = 1
-                    pos_neg_bf[posn_mapping[pos]] = 0
-                    pos_neg_bf[posn_mapping[neg]] = 1
-
-                new_corr = self.corr( pos_neg_bf, [rev_mapping[x] for x in np.nonzero(pos_neg_bf)[0]])
-                delta = new_corr - cur_corr
-                cur_corr = new_corr
-
-            iters += 1
-            if iters % 5000 == 0:
-                print(cur_corr, delta, iters)
-        return  cur_user_map   
+ 
 
 
 def run(params: Dict):
@@ -1036,7 +972,6 @@ def run(params: Dict):
     
     user_map = {user:val for user, val in zip(range(len(list(full_graph.nodes))), vals)}
     map_user_id = {user:ix for ix, user in enumerate(list(full_graph.nodes))}
-    print("STARTING LENGTH OF USER MAP AND MAP USER ID {} {}".format(len(user_map), len(map_user_id)))
     #split_network_file('twittergraph.edgelist.txt', 8, params['num_agents'], kwargs={x:params[x] for x in ['activity', 'ranking', 'len_feed']})
     #generate_network_file('network.txt', 2, params['num_agents'], kwargs={x:params[x] for x in ['activity', 'ranking', 'len_feed']})
     model = Model(MPI.COMM_WORLD, params)
